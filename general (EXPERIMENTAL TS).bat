@@ -1,4 +1,4 @@
-﻿@echo off
+@echo off
 chcp 65001 > nul
 :: ЭКСПЕРИМЕНТ: fooling=ts
 :: Обман DPI с помощью некорректных TCP timestamps.

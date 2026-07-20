@@ -1,4 +1,4 @@
-﻿@echo off
+@echo off
 chcp 65001 > nul
 :: КОМБО 3: hostfakesplit + ts
 :: Заменяем домен при расщеплении (hostfakesplit) вместе с ts для обмана DPI.
