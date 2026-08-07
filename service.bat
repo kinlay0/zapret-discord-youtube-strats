@@ -991,7 +991,7 @@ chcp 437 > nul
 cls
 
 set "listFile=%~dp0lists\ipset-all.txt"
-set "url=https://raw.githubusercontent.com/Flowseal/zapret-discord-youtube/refs/heads/main/.service/ipset-service.txt"
+set "url=https://raw.githubusercontent.com/kinlay0/zapret-discord-youtube-strats/refs/heads/main/.service/ipset-service.txt"
 
 echo Updating ipset-all...
 
