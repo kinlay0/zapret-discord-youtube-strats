@@ -6,6 +6,9 @@ on:
       tag:
         description: 'Release tag'
         required: true
+      release_name:
+        description: 'version'
+        required: true
 
 jobs:
   release:
@@ -54,7 +57,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.inputs.tag }}
-          name: ${{ github.event.inputs.tag }}
+          name: ${{ github.event.inputs.release_name }}
           files: |
             zapret-discord-youtube-strats.zip
             zapret-discord-youtube-strats.rar
