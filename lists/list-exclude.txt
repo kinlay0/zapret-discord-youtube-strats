@@ -11,6 +11,8 @@ libreoffice.org
 documentfoundation.org
 7-zip.org
 aida64.com
+battlepass.ru
+finargot.ru
 calibre-ebook.com
 ccleaner.com
 filezilla-project.org
