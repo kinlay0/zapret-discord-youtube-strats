@@ -1,8 +1,6 @@
 @echo off
 chcp 65001 > nul
-:: 65001 - UTF-8
-:: Вариант: fake,multidisorder + fooling=ts + fake-tls-mod=rnd,dupsid,sni
-:: split-pos=1,midsld (середина домена второго уровня) + repeats=11
+:: by FlowersOfMind
 
 cd /d "%~dp0"
 call service.bat status_zapret
