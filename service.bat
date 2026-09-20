@@ -371,9 +371,9 @@ chcp 437 > nul
 cls
 
 :: Set current version and URLs
-set "GITHUB_VERSION_URL=https://raw.githubusercontent.com/Flowseal/zapret-discord-youtube/main/.service/version.txt"
-set "GITHUB_RELEASE_URL=https://github.com/Flowseal/zapret-discord-youtube/releases/tag/"
-set "GITHUB_DOWNLOAD_URL=https://github.com/Flowseal/zapret-discord-youtube/releases/latest"
+set "GITHUB_VERSION_URL=https://raw.githubusercontent.com/kinlay0/zapret-discord-youtube-strats/main/.service/version.txt"
+set "GITHUB_RELEASE_URL=https://github.com/kinlay0/zapret-discord-youtube-strats/releases/tag/"
+set "GITHUB_DOWNLOAD_URL=https://github.com/kinlay0/zapret-discord-youtube-strats/releases/latest"
 
 :: Get the latest version from GitHub
 for /f "delims=" %%A in ('powershell -NoProfile -Command "(Invoke-WebRequest -Uri \"%GITHUB_VERSION_URL%\" -Headers @{\"Cache-Control\"=\"no-cache\"} -UseBasicParsing -TimeoutSec 5).Content.Trim()" 2^>nul') do set "GITHUB_VERSION=%%A"
@@ -1113,7 +1113,7 @@ chcp 437 > nul
 cls
 
 set "listFile=%~dp0lists\ipset-all.txt"
-set "url=https://raw.githubusercontent.com/Flowseal/zapret-discord-youtube/refs/heads/main/.service/ipset-service.txt"
+set "url=https://raw.githubusercontent.com/kinlay0/zapret-discord-youtube-strats/main/.service/ipset-service.txt"
 
 echo Updating ipset-all...
 
