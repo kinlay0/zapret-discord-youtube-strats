@@ -1,5 +1,5 @@
 @echo off
-set "LOCAL_VERSION=1.10.3"
+set "LOCAL_VERSION=1.10.3a"
 
 :: External commands
 if "%~1"=="status_zapret" (
@@ -29,6 +29,12 @@ if "%~1"=="load_game_filter" (
 
 if "%~1"=="load_user_lists" (
     call :load_user_lists
+    call :ws_proxy_start
+    exit /b
+)
+
+if "%~1"=="ws_proxy_stop" (
+    call :ws_proxy_stop
     exit /b
 )
 
@@ -61,6 +67,7 @@ cls
 call :ipset_switch_status
 call :game_switch_status
 call :check_updates_switch_status
+call :ws_proxy_switch_status
 call :get_strategy_name
 
 set "menu_choice=null"
@@ -80,21 +87,22 @@ echo      4. Game Filter         [!GameFilterStatus!]
 echo      5. IPSet Filter        [!IPsetStatus!]
 echo      6. Auto-Update Check   [!CheckUpdatesStatus!]
 echo      7. Replace active fakes
+echo      8. WS Proxy            [!WsProxyStatus!]
 echo.
 echo   :: UPDATES
-echo      8. Update IPSet List
-echo      9. Update Hosts File
-echo      10. Check for Updates
+echo      9. Update IPSet List
+echo      10. Update Hosts File
+echo      11. Check for Updates
 echo.
 echo   :: TOOLS
-echo      11. Run Diagnostics
-echo      12. Run Tests
+echo      12. Run Diagnostics
+echo      13. Run Tests
 echo.
 echo   ----------------------------------------
 echo      0. Exit
 echo.
 
-set /p menu_choice=   Select option (0-12): 
+set /p menu_choice=   Select option (0-13): 
 
 if "%menu_choice%"=="1" goto service_install
 if "%menu_choice%"=="2" goto service_remove
@@ -103,11 +111,12 @@ if "%menu_choice%"=="4" goto game_switch
 if "%menu_choice%"=="5" goto ipset_switch
 if "%menu_choice%"=="6" goto check_updates_switch
 if "%menu_choice%"=="7" goto replace_active_fakes
-if "%menu_choice%"=="8" goto ipset_update
-if "%menu_choice%"=="9" goto hosts_update
-if "%menu_choice%"=="10" goto service_check_updates
-if "%menu_choice%"=="11" goto service_diagnostics
-if "%menu_choice%"=="12" goto run_tests
+if "%menu_choice%"=="8" goto ws_proxy_switch
+if "%menu_choice%"=="9" goto ipset_update
+if "%menu_choice%"=="10" goto hosts_update
+if "%menu_choice%"=="11" goto service_check_updates
+if "%menu_choice%"=="12" goto service_diagnostics
+if "%menu_choice%"=="13" goto run_tests
 if "%menu_choice%"=="0" exit /b
 goto menu
 
@@ -128,6 +137,138 @@ if not exist "%LISTS_PATH%list-exclude-user.txt" (
 )
 
 exit /b
+
+
+:: WS PROXY ===========================
+:ws_proxy_mode
+set "WsProxyMode=disabled"
+if exist "%~dp0utils\ws_tunnel.enabled" if not exist "%~dp0utils\ws_proxy.enabled" move /y "%~dp0utils\ws_tunnel.enabled" "%~dp0utils\ws_proxy.enabled" >nul 2>&1
+if exist "%~dp0utils\cf_tunnel.enabled" if not exist "%~dp0utils\ws_proxy.enabled" move /y "%~dp0utils\cf_tunnel.enabled" "%~dp0utils\ws_proxy.enabled" >nul 2>&1
+if not exist "%~dp0utils\ws_proxy.enabled" exit /b
+set "WsProxyMode=cloudflare"
+findstr /i /c:"deno" "%~dp0utils\ws_proxy.enabled" >nul 2>&1
+if not errorlevel 1 set "WsProxyMode=deno"
+exit /b
+
+:ws_proxy_has_url
+call :ws_proxy_mode
+if not exist "%~dp0utils\ws-proxy-settings.txt" exit /b 1
+setlocal EnableDelayedExpansion
+set "WsSec="
+set "WsFound=1"
+for /f "usebackq tokens=* delims=" %%L in ("%~dp0utils\ws-proxy-settings.txt") do (
+    set "WsLine=%%L"
+    set "WsLine=!WsLine: =!"
+    if "!WsLine:~0,1!"=="[" (
+        set "WsSec=!WsLine!"
+    ) else if /i "!WsSec!"=="[%WsProxyMode%]" (
+        if /i "!WsLine:~0,10!"=="url=wss://" set "WsFound=0"
+    )
+)
+endlocal & exit /b %WsFound%
+
+:ws_proxy_start
+if not exist "%~dp0utils\ws_proxy.enabled" exit /b
+if not exist "%~dp0utils\ws-proxy.ps1" exit /b
+call :ws_proxy_has_url
+if errorlevel 1 exit /b
+call "%~dp0utils\ws-proxy-run.bat"
+exit /b
+
+:ws_proxy_task_create
+if not exist "%~dp0utils\ws_proxy.enabled" exit /b
+call :ws_proxy_has_url
+if errorlevel 1 exit /b
+schtasks /create /tn "zapret-ws-proxy" /tr "\"%~dp0utils\ws-proxy-run.bat\"" /sc onlogon /ru "%USERDOMAIN%\%USERNAME%" /it /rl limited /f >nul 2>&1
+if errorlevel 1 (
+    call :PrintYellow "[?] could not create WS proxy autostart task"
+) else (
+    call :PrintGreen "WS proxy autostart at logon: enabled"
+)
+exit /b
+
+:ws_proxy_task_delete
+schtasks /delete /tn "zapret-ws-proxy" /f >nul 2>&1
+schtasks /delete /tn "zapret-cf-tunnel" /f >nul 2>&1
+schtasks /delete /tn "zapret-ws-tunnel" /f >nul 2>&1
+exit /b
+
+:ws_proxy_stop
+if not exist "%~dp0utils\ws-proxy.ps1" exit /b
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0utils\ws-proxy.ps1" -Stop >nul 2>&1
+exit /b
+
+:ws_proxy_switch_status
+set "wsProxyFlag=%~dp0utils\ws_proxy.enabled"
+call :ws_proxy_mode
+set "WsProxyStatus=%WsProxyMode%"
+exit /b
+
+:ws_proxy_switch
+chcp 437 > nul
+cls
+call :ws_proxy_switch_status
+
+echo Select WS proxy option:
+if "%WsProxyMode%"=="cloudflare" (echo   1. * Cloudflare) else echo   1.   Cloudflare
+if "%WsProxyMode%"=="deno"       (echo   2. * Deno) else       echo   2.   Deno
+if "%WsProxyMode%"=="disabled"   (echo   3. * Disable) else    echo   3.   Disable
+echo.
+echo.  0. Exit
+echo.
+set "WsProxyChoice=0"
+set /p "WsProxyChoice=Select option (0-3, default: 0): "
+if "%WsProxyChoice%"=="" set "WsProxyChoice=0"
+
+if "%WsProxyChoice%"=="1" (
+    set "WsProxyNew=cloudflare"
+) else if "%WsProxyChoice%"=="2" (
+    set "WsProxyNew=deno"
+) else if "%WsProxyChoice%"=="3" (
+    set "WsProxyNew=disabled"
+) else (
+    goto menu
+)
+
+echo.
+if "%WsProxyNew%"=="%WsProxyMode%" (
+    echo WS proxy is already set to %WsProxyNew%
+    pause
+    goto menu
+)
+
+call :ws_proxy_stop
+
+if "%WsProxyNew%"=="disabled" (
+    del /f /q "%wsProxyFlag%" >nul 2>&1
+    call :ws_proxy_task_delete
+    call :PrintGreen "WS proxy stopped"
+    pause
+    goto menu
+)
+
+> "%wsProxyFlag%" echo %WsProxyNew%
+echo WS proxy mode: %WsProxyNew%
+call :ws_proxy_has_url
+if errorlevel 1 (
+    call :ws_proxy_task_delete
+    call :PrintYellow "[?] url in [%WsProxyNew%] section of utils\ws-proxy-settings.txt is empty - fill in url and key first"
+    pause
+    goto menu
+)
+
+sc query "zapret" >nul 2>&1
+if !errorlevel!==0 call :ws_proxy_task_create
+tasklist /FI "IMAGENAME eq winws.exe" | find /I "winws.exe" > nul
+if !errorlevel!==0 (
+    call :ws_proxy_start
+    call :PrintGreen "WS proxy started (%WsProxyNew%)"
+) else (
+    echo WS proxy will start together with the next strategy you open
+)
+
+pause
+goto menu
 
 
 :: TCP ENABLE ==========================
@@ -208,6 +349,9 @@ tasklist /FI "IMAGENAME eq winws.exe" | find /I "winws.exe" > nul
 if !errorlevel!==0 (
     taskkill /IM winws.exe /F > nul
 )
+
+call :ws_proxy_stop
+call :ws_proxy_task_delete
 
 sc query "WinDivert" >nul 2>&1
 if !errorlevel!==0 (
@@ -360,6 +504,9 @@ for %%F in ("!file%choice%!") do (
     set "filename=%%~nF"
 )
 reg add "HKLM\System\CurrentControlSet\Services\zapret" /v zapret-discord-youtube /t REG_SZ /d "!filename!" /f
+
+call :ws_proxy_task_create
+call :ws_proxy_start
 
 pause
 goto menu
