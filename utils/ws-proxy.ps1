@@ -142,7 +142,9 @@ public class Ws
 
 public static class WsProxy
 {
-    public static string Url = "", Key = "", Ip = "", Pac = "";
+    public static string Pac = "";
+    public static string[] Names = new string[0], Urls = new string[0], Keys = new string[0], Ips = new string[0];
+    public static int SwitchTimeout = 5000;
     public static int Port = 1080;
     public static bool Verbose;
     public static string[] Domains = new string[0];
@@ -154,7 +156,18 @@ public static class WsProxy
         try { InternetSetOption(IntPtr.Zero, 39, IntPtr.Zero, 0); InternetSetOption(IntPtr.Zero, 37, IntPtr.Zero, 0); } catch { }
     }
 
-    static void Log(string s) { Console.WriteLine(DateTime.Now.ToString("HH:mm:ss") + " " + s); }
+    static object logLock = new object();
+    static System.Collections.Generic.List<string> held = null;
+    public static void Hold() { lock (logLock) held = new System.Collections.Generic.List<string>(); }
+    public static void Release()
+    {
+        lock (logLock) { foreach (string l in held) Console.WriteLine(l); held = null; }
+    }
+    static void Log(string s)
+    {
+        string l = DateTime.Now.ToString("HH:mm:ss") + " " + s;
+        lock (logLock) { if (held != null) held.Add(l); else Console.WriteLine(l); }
+    }
 
     public static async Task<T> Timeout<T>(Task<T> t, int ms, string what)
     {
@@ -191,6 +204,76 @@ public static class WsProxy
             len += n;
         }
         return len;
+    }
+
+    static Uri TunUri(int i, string host, int port)
+    {
+        return new Uri(Urls[i] + (Urls[i].Contains("?") ? "&" : "?") + "k=" + Uri.EscapeDataString(Keys[i]) +
+            "&h=" + Uri.EscapeDataString(host) + "&p=" + port);
+    }
+
+    static void Drop(Task<Ws> t)
+    {
+        t.ContinueWith(x => { if (x.IsFaulted) { var e = x.Exception; } else if (!x.IsCanceled) x.Result.Close(); });
+    }
+
+    static DateTime[] downUntil = new DateTime[4];
+    static async Task<Ws> Tunnel(string host, int port)
+    {
+        for (int i = 0; ; i++)
+        {
+            bool last = i == Urls.Length - 1;
+            if (!last && DateTime.Now < downUntil[i]) continue;
+            Task<Ws> t = Ws.Connect(TunUri(i, host, port), Ips[i]);
+            if (last) return await t;
+            try
+            {
+                Ws w = await Timeout(t, SwitchTimeout, "connect");
+                if (downUntil[i] != DateTime.MinValue) { downUntil[i] = DateTime.MinValue; Log(Names[i] + " is back"); }
+                return w;
+            }
+            catch (Exception e)
+            {
+                Drop(t);
+                bool show;
+                lock (downUntil) { show = DateTime.Now >= downUntil[i]; downUntil[i] = DateTime.Now.AddSeconds(60); }
+                if (show) Log(Names[i] + " didn't answer, trying " + Names[i + 1] + " (" + e.GetBaseException().Message + ")");
+            }
+        }
+    }
+
+    public static string Check(int i)
+    {
+        DateTime t0 = DateTime.Now;
+        Ws ws = null;
+        try
+        {
+            Task<string> t = Task.Run(async () =>
+            {
+                ws = await Ws.Connect(TunUri(i, "www.google.com", 80), Ips[i]);
+                byte[] req = Encoding.ASCII.GetBytes("HEAD / HTTP/1.1\r\nHost: www.google.com\r\nConnection: close\r\n\r\n");
+                await ws.Send(req, req.Length);
+                MemoryStream ms = new MemoryStream();
+                Task r = ws.ReceiveTo(ms);
+                while (!r.IsCompleted && ms.Length < 5) await Task.Delay(20);
+                if (ms.Length < 5) { try { await r; } catch (Exception e) { throw new Exception("server closed the connection (" + e.GetBaseException().Message + ")"); } throw new Exception("server closed the connection"); }
+                string ans = Encoding.ASCII.GetString(ms.ToArray(), 0, 5);
+                if (ans != "HTTP/") throw new Exception("strange answer from server");
+                return "ok (" + (int)(DateTime.Now - t0).TotalMilliseconds + " ms)";
+            });
+            if (!t.Wait(20000)) throw new TimeoutException("no answer in 20 s");
+            return t.Result;
+        }
+        catch (Exception e)
+        {
+            string m = e.GetBaseException().Message;
+            m = m.Replace("  ", " ").Trim();
+            if (m.Contains(" 403") || m.Contains(" 401")) m += " - check key";
+            else if (m.Contains("end of the stream")) m = "connection closed before answer - server is blocked or url is wrong";
+            else if (m.Contains("timeout") || m.Contains("TCP connect failed")) m += " - server unreachable (blocked? check url/ip)";
+            return "FAIL - " + m;
+        }
+        finally { if (ws != null) ws.Close(); }
     }
 
     static bool Match(string host)
@@ -279,8 +362,7 @@ public static class WsProxy
             target = (tun ? "PRX  " : "DIR  ") + target;
             Stream rs = null;
             if (tun)
-                ws = await Ws.Connect(new Uri(Url + (Url.Contains("?") ? "&" : "?") + "k=" + Uri.EscapeDataString(Key) +
-                    "&h=" + Uri.EscapeDataString(host) + "&p=" + port), Ip);
+                ws = await Tunnel(host, port);
             else
             {
                 remote = new TcpClient();
@@ -319,11 +401,12 @@ public static class WsProxy
 
 $cfg = @{ port = '1080'; setpac = '1'; verbose = '0' }
 $srv = @{ cloudflare = @{ url = ''; key = ''; ip = '' }; deno = @{ url = ''; key = ''; ip = '' } }
+$order = New-Object System.Collections.Generic.List[string]
 $ini = Join-Path $PSScriptRoot 'ws-proxy-settings.txt'
 if (Test-Path $ini) {
     $sec = ''
     foreach ($l in Get-Content $ini) {
-        if ($l -match '^\s*\[\s*([a-z]+)\s*\]\s*$') { $sec = $Matches[1].ToLower(); continue }
+        if ($l -match '^\s*\[\s*([a-z]+)\s*\]\s*$') { $sec = $Matches[1].ToLower(); if ($srv.ContainsKey($sec) -and -not $order.Contains($sec)) { $order.Add($sec) }; continue }
         if ($l -match '^\s*([a-z_]+)\s*=\s*(.*?)\s*$') {
             if ($srv.ContainsKey($sec)) { $srv[$sec][$Matches[1].ToLower()] = $Matches[2] }
             else { $cfg[$Matches[1].ToLower()] = $Matches[2] }
@@ -351,14 +434,15 @@ if ($Stop) {
     exit 0
 }
 
-$Mode = 'cloudflare'
-$flag = Join-Path $PSScriptRoot 'ws_proxy.enabled'
-if ((Test-Path $flag) -and ((Get-Content $flag -Raw) -match 'deno')) { $Mode = 'deno' }
-$TunUrl = $srv[$Mode].url
-$TunKey = $srv[$Mode].key
-$TunIp = $srv[$Mode].ip
-if (-not $TunUrl.StartsWith('wss://')) { Fail "url in [$Mode] section of utils\ws-proxy-settings.txt is empty or not wss:// (now: '$TunUrl')" }
-if ($TunKey -eq '' -or $TunKey.StartsWith('CHANGE-ME')) { Fail "set key in [$Mode] section of utils\ws-proxy-settings.txt" }
+$Servers = @()
+foreach ($n in $order) {
+    $u = $srv[$n].url; $k = $srv[$n].key
+    if ($u -eq '' -and $k -eq '') { continue }
+    if (-not $u.StartsWith('wss://')) { Write-Host "[$n] skipped: url is empty or not wss:// (now: '$u')" -ForegroundColor Yellow; continue }
+    if ($k -eq '' -or $k.StartsWith('CHANGE-ME')) { Write-Host "[$n] skipped: key is empty" -ForegroundColor Yellow; continue }
+    $Servers += $n
+}
+if ($Servers.Count -eq 0) { Fail 'no server is set up: fill in url and key in [cloudflare] and/or [deno] section of utils\ws-proxy-settings.txt' }
 
 $mutex = New-Object System.Threading.Mutex($false, 'Local\zapret-ws-proxy')
 if (-not $mutex.WaitOne(0)) { Write-Host 'ws-proxy is already running'; Start-Sleep 3; exit 0 }
@@ -378,9 +462,10 @@ $count = Load-List
 if ($count -eq 0) { Fail 'list-proxy.txt is empty' }
 $listTime = (Get-Item $ListFile).LastWriteTime
 
-[WsProxy]::Url = $TunUrl
-[WsProxy]::Key = $TunKey
-[WsProxy]::Ip = $TunIp
+[WsProxy]::Names = [string[]]$Servers
+[WsProxy]::Urls = [string[]]@($Servers | ForEach-Object { $srv[$_].url })
+[WsProxy]::Keys = [string[]]@($Servers | ForEach-Object { $srv[$_].key })
+[WsProxy]::Ips = [string[]]@($Servers | ForEach-Object { "$($srv[$_].ip)" })
 [WsProxy]::Port = $Port
 [WsProxy]::Verbose = ($cfg.verbose -eq '1')
 
@@ -389,9 +474,19 @@ if ($cfg.setpac -eq '1') { Set-Pac $true }
 
 $host.UI.RawUI.WindowTitle = 'zapret: ws-proxy'
 Write-Host "ws-proxy running: proxy 127.0.0.1:$Port, PAC $PacUrl"
-Write-Host "$Mode`: $TunUrl"
+for ($i = 0; $i -lt $Servers.Count; $i++) { Write-Host "$(if ($i -eq 0) { 'main' } else { 'fallback' }) $($Servers[$i]): $($srv[$Servers[$i]].url)" }
 Write-Host "domains via proxy: $count (lists\list-proxy.txt)"
 Write-Host 'close this window or run "ws-proxy.ps1 -Stop" to stop'
+Write-Host ''
+[WsProxy]::Hold()
+try {
+    for ($i = 0; $i -lt $Servers.Count; $i++) {
+        Write-Host "checking $($Servers[$i])... " -NoNewline
+        $res = [WsProxy]::Check($i)
+        Write-Host $res -ForegroundColor $(if ($res.StartsWith('ok')) { 'Green' } else { 'Red' })
+    }
+    Write-Host ''
+} finally { [WsProxy]::Release() }
 
 try {
     while (-not $task.Wait(2000)) {

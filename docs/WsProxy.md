@@ -20,13 +20,13 @@
 1. заходим на [dash.cloudflare.com](https://dash.cloudflare.com/) - ищем слева `Compute`, тыкаем, находим `Workers & Pages`
     * аккаунта нет? регистрируемся, без этого Worker не создать
 2. сверху справа `Create application` -> `Start with Hello World!` -> `Deploy`
-3. сверху справа `Edit code`, удаляем весь код и вставляем код [снизу](#worker) -> `Deploy`
-4. на странице вашего Worker'а открываем `Settings` (сверху) -> `Variables and Secrets` -> `Add variable`
+3. сверху справа `Edit code`, удаляем весь код и вставляем код [снизу](#worker) -> `Deploy` -> тыкаем стрелку слева сверху (для того чтобы вернуться на страницу воркера)
+4. на странице вашего Worker'а открываем `Settings` (сверху) -> находим `Runtime variables and secrets` -> `+ Add variable` (чуть правее названия)
     1. Environment оставляем на `Production`
     2. в `Key` пишем что хотим, но можно и `KEY` (капсом)
-    3. в `Value` пишем свой ключ - любая длинная строка, и обязательно ставим галочку на `Secret`
+    3. в `Value` пишем свой ключ - любая длинная строка, и обязательно ставим галочку на `Secret` (не забудьте скопировать ключ, если вы решили сделать его длинным)
     4. `Add variable and deploy`
-    5. копируем `Secret` и заходим обратно в `Edit code` и заменяем заглушку ключа на ваш собственный.
+    5. копируем `Secret` и заходим обратно в `Edit code` и заменяем заглушку ключа на ваш собственный. (3 строка)
 5. копируем домен Worker'а вида `random-name.username.workers.dev`
 
 ### 2. настройка
@@ -37,7 +37,7 @@
 url=wss://random-name.username.workers.dev/
 key=ваш ключ
 ```
-обязательно учитываем `wss://`!
+обязательно замените в url `https://` на `wss://`!!
 
 2. домен Worker'а добавляем в `lists\list-exclude-user.txt`, чтобы стратегии zapret не ломали соединение до cloudflare
     - если Worker без zapret не открывается, тогда наоборот добавляем его в `lists\list-general-user.txt`
@@ -66,17 +66,25 @@ key=ваш ключ
 
 6. домен Deno добавляем в `lists\list-exclude-user.txt` (или в `list-general-user.txt`, если без zapret не открывается, но у deno нет ограничений в РФ, так что добавляйте в `list-exclude.txt`)
 7. нужные домены пишем в `lists\list-proxy.txt`
-8. `service.bat` -> `8. WS Proxy` -> `2. Deno`
 
 </details>
 
 ### включение
 
-1. запускаем `service.bat` -> `8. WS Proxy` -> выбираем `1. Cloudflare` или `2. Deno`
+1. запускаем `service.bat` -> `8. WS Proxy`, чтобы стало `[enabled]`. сервер выбирать не надо, ws-proxy сам берет те секции из `utils\ws-proxy-settings.txt`, где заполнены `url` и `key`:
+    - заполнена одна секция (cloudflare или deno) - работает только одна
+    - заполнены обе - основной тот, что выше в файле, второй запасной. если основной не отвечает 5 секунд, прокси сам переключается на запасной, а основной пробует снова через минуту. чтобы поменять основной, просто переставьте секции местами
+    - не заполнено ничего - не вкючится прокси
 2. запускаем любую стратегию `general*.bat` вручную или через `1. Install Service`, прокси стартует сам в свернутом окне `zapret: ws-proxy`
 или же откройте папку `utils` и запустите `ws-proxy-debug.bat`
 
-выключить: `service.bat` -> `8. WS Proxy` -> `3. Disable`, либо `2. Remove Services`
+при запуске ws-proxy один раз проверяет каждый сервер и пишет результат, например:
+```
+checking deno... ok (377 ms)
+checking cloudflare... FAIL - Server answered 'HTTP/1.1 403 Forbidden'
+```
+
+выключить: `service.bat` -> `8. WS Proxy` еще раз (станет `[disabled]`), либо `2. Remove Services`
 
 ### проверка
 вводим в PowerShell:
