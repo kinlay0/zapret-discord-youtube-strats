@@ -1,5 +1,5 @@
 @echo off
-set "LOCAL_VERSION=1.10.3a"
+set "LOCAL_VERSION=1.10.4"
 
 :: External commands
 if "%~1"=="status_zapret" (
@@ -144,40 +144,49 @@ exit /b
 set "WsProxyMode=disabled"
 if exist "%~dp0utils\ws_tunnel.enabled" if not exist "%~dp0utils\ws_proxy.enabled" move /y "%~dp0utils\ws_tunnel.enabled" "%~dp0utils\ws_proxy.enabled" >nul 2>&1
 if exist "%~dp0utils\cf_tunnel.enabled" if not exist "%~dp0utils\ws_proxy.enabled" move /y "%~dp0utils\cf_tunnel.enabled" "%~dp0utils\ws_proxy.enabled" >nul 2>&1
-if not exist "%~dp0utils\ws_proxy.enabled" exit /b
-set "WsProxyMode=cloudflare"
-findstr /i /c:"deno" "%~dp0utils\ws_proxy.enabled" >nul 2>&1
-if not errorlevel 1 set "WsProxyMode=deno"
+if exist "%~dp0utils\ws_proxy.enabled" set "WsProxyMode=enabled"
 exit /b
 
-:ws_proxy_has_url
-call :ws_proxy_mode
+:ws_proxy_servers
+set "WsProxyServers="
 if not exist "%~dp0utils\ws-proxy-settings.txt" exit /b 1
 setlocal EnableDelayedExpansion
 set "WsSec="
-set "WsFound=1"
+set "WsOrder="
+set "WsList="
 for /f "usebackq tokens=* delims=" %%L in ("%~dp0utils\ws-proxy-settings.txt") do (
     set "WsLine=%%L"
     set "WsLine=!WsLine: =!"
     if "!WsLine:~0,1!"=="[" (
-        set "WsSec=!WsLine!"
-    ) else if /i "!WsSec!"=="[%WsProxyMode%]" (
-        if /i "!WsLine:~0,10!"=="url=wss://" set "WsFound=0"
+        set "WsSec=!WsLine:~1,-1!"
+        set "WsOrder=!WsOrder! !WsSec!"
+    ) else if defined WsSec (
+        if /i "!WsLine:~0,10!"=="url=wss://" set "WsU_!WsSec!=1"
+        if /i "!WsLine:~0,4!"=="key=" if not "!WsLine:~4!"=="" if /i not "!WsLine:~4,9!"=="CHANGE-ME" set "WsK_!WsSec!=1"
     )
 )
-endlocal & exit /b %WsFound%
+for %%S in (!WsOrder!) do if defined WsU_%%S if defined WsK_%%S set "WsList=!WsList!, %%S"
+set "WsFound=1"
+if defined WsList (
+    set "WsList=!WsList:~2!"
+    set "WsFound=0"
+)
+endlocal & set "WsProxyServers=%WsList%" & exit /b %WsFound%
 
 :ws_proxy_start
 if not exist "%~dp0utils\ws_proxy.enabled" exit /b
 if not exist "%~dp0utils\ws-proxy.ps1" exit /b
-call :ws_proxy_has_url
-if errorlevel 1 exit /b
+call :ws_proxy_servers
+if errorlevel 1 (
+    call :PrintYellow "[?] WS proxy is enabled, but no server is set up in utils\ws-proxy-settings.txt - proxy not started"
+    exit /b
+)
 call "%~dp0utils\ws-proxy-run.bat"
 exit /b
 
 :ws_proxy_task_create
 if not exist "%~dp0utils\ws_proxy.enabled" exit /b
-call :ws_proxy_has_url
+call :ws_proxy_servers
 if errorlevel 1 exit /b
 schtasks /create /tn "zapret-ws-proxy" /tr "\"%~dp0utils\ws-proxy-run.bat\"" /sc onlogon /ru "%USERDOMAIN%\%USERNAME%" /it /rl limited /f >nul 2>&1
 if errorlevel 1 (
@@ -209,60 +218,34 @@ chcp 437 > nul
 cls
 call :ws_proxy_switch_status
 
-echo Select WS proxy option:
-if "%WsProxyMode%"=="cloudflare" (echo   1. * Cloudflare) else echo   1.   Cloudflare
-if "%WsProxyMode%"=="deno"       (echo   2. * Deno) else       echo   2.   Deno
-if "%WsProxyMode%"=="disabled"   (echo   3. * Disable) else    echo   3.   Disable
-echo.
-echo.  0. Exit
-echo.
-set "WsProxyChoice=0"
-set /p "WsProxyChoice=Select option (0-3, default: 0): "
-if "%WsProxyChoice%"=="" set "WsProxyChoice=0"
-
-if "%WsProxyChoice%"=="1" (
-    set "WsProxyNew=cloudflare"
-) else if "%WsProxyChoice%"=="2" (
-    set "WsProxyNew=deno"
-) else if "%WsProxyChoice%"=="3" (
-    set "WsProxyNew=disabled"
-) else (
-    goto menu
-)
-
-echo.
-if "%WsProxyNew%"=="%WsProxyMode%" (
-    echo WS proxy is already set to %WsProxyNew%
-    pause
-    goto menu
-)
-
-call :ws_proxy_stop
-
-if "%WsProxyNew%"=="disabled" (
+if "%WsProxyMode%"=="enabled" (
+    echo Disabling WS proxy...
+    call :ws_proxy_stop
     del /f /q "%wsProxyFlag%" >nul 2>&1
     call :ws_proxy_task_delete
-    call :PrintGreen "WS proxy stopped"
+    call :PrintGreen "WS proxy disabled"
     pause
     goto menu
 )
 
-> "%wsProxyFlag%" echo %WsProxyNew%
-echo WS proxy mode: %WsProxyNew%
-call :ws_proxy_has_url
+call :ws_proxy_servers
 if errorlevel 1 (
-    call :ws_proxy_task_delete
-    call :PrintYellow "[?] url in [%WsProxyNew%] section of utils\ws-proxy-settings.txt is empty - fill in url and key first"
+    call :PrintYellow "[?] no server is set up in utils\ws-proxy-settings.txt"
+    echo     fill in url and key in [cloudflare] and/or [deno] section, then enable WS proxy again
     pause
     goto menu
 )
+
+echo Enabling WS proxy...
+> "%wsProxyFlag%" echo ENABLED
+echo servers: %WsProxyServers% (first is main, second is fallback)
 
 sc query "zapret" >nul 2>&1
 if !errorlevel!==0 call :ws_proxy_task_create
 tasklist /FI "IMAGENAME eq winws.exe" | find /I "winws.exe" > nul
 if !errorlevel!==0 (
     call :ws_proxy_start
-    call :PrintGreen "WS proxy started (%WsProxyNew%)"
+    call :PrintGreen "WS proxy started"
 ) else (
     echo WS proxy will start together with the next strategy you open
 )
@@ -701,9 +684,9 @@ if not exist "%BIN_PATH%\*.sys" (
 
 :: VPN
 set "VPN_SERVICES="
-sc query | findstr /I "VPN" > nul
+sc query | findstr /I "VPN HappService" > nul
 if !errorlevel!==0 (
-    for /f "tokens=2 delims=:" %%A in ('sc query ^| findstr /I "VPN"') do (
+    for /f "tokens=2 delims=:" %%A in ('sc query ^| findstr /I "VPN HappService"') do (
         if not defined VPN_SERVICES (
             set "VPN_SERVICES=!VPN_SERVICES!%%A"
         ) else (
